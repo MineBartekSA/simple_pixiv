@@ -8,7 +8,7 @@ module Pixiv
     property caption : String
     property tags : Array(Tag)
     property user : User
-    property series : SeriesInfo
+    property series : SeriesInfo?
     property total_view : UInt64
     property total_bookmarks : UInt64
     @[JSON::Field(converter: Pixiv::RFC3339Converter)]
