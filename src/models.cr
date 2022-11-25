@@ -8,6 +8,7 @@ module Pixiv
     property caption : String
     property tags : Array(Tag)
     property user : User
+    property series : SeriesInfo
     property total_view : UInt64
     property total_bookmarks : UInt64
     @[JSON::Field(converter: Pixiv::RFC3339Converter)]
@@ -193,6 +194,13 @@ module Pixiv
     def next_id : UInt64
       self.next_url.query_params["max_bookmark_id"].to_u64
     end
+  end
+
+  struct SeriesInfo
+    include JSON::Serializable
+
+    property id : UInt64
+    property title : String
   end
 
   struct IllustrationSeries
