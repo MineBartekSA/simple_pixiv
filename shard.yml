@@ -1,0 +1,13 @@
+name: simple_pixiv
+version: 0.1.0
+
+authors:
+  - Bartłomiej Skoczeń <bartek_skoczen@protonmail.com>
+
+targets:
+  simple_pixiv:
+    main: src/simple_pixiv.cr
+
+crystal: 1.6.2
+
+license: MIT
