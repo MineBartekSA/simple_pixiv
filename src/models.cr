@@ -126,7 +126,7 @@ module Pixiv
     property translated_name : String?
 
     def get_name : String
-      self.translated_name | self.name
+      self.translated_name || self.name
     end
   end
 
