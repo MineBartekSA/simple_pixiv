@@ -18,4 +18,21 @@ module Pixiv
       json.string value.to_s
     end
   end
+
+  module RestrictConverter
+    def self.from_json(value : JSON::PullParser) : Restrict
+      case value.read_string
+      when "public"
+        Restrict::Public
+      when "private"
+        Restrict::Private
+      else
+        raise "invalid value"
+      end
+    end
+
+    def self.to_json(value : Restrict, json : JSON::Builder)
+      json.string value.to_s
+    end
+  end
 end

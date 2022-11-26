@@ -5,6 +5,10 @@ require "openssl"
 
 require "./utils"
 require "./models"
+require "./illust"
+require "./user"
+require "./bookmark"
+require "./ugoira"
 
 module Pixiv
   Log = ::Log.for "pixiv"
@@ -29,16 +33,20 @@ module Pixiv
     @access_token : String
     @expires_at : Time
 
+    property user : User
+
     def initialize(@refresh_token)
+      info = Client.refresh @refresh_token
+      @access_token = info.access_token
+      @refresh_token = info.refresh_token
+      @expires_at = (Time.utc + Time::Span.new(seconds: info.expires_in))
+      @user = info.user.to_user
       @client = HTTP::Client.new URI.parse("https://app-api.pixiv.net")
-      @access_token = ""
-      @expires_at = Time.unix 0
-      self.refresh
       raise "failed to get access token" if @access_token == ""
     end
 
-    # Refresh token
-    def refresh : RefreshInfo
+    # Refresh access token
+    def self.refresh(refresh_token : String) : RefreshInfo
       datetime = Time::Format::RFC_3339.format Time.utc
       datehash = Base64.encode(OpenSSL::MD5.hash(datetime + HASH_SECRET))[..-2]
 
@@ -53,108 +61,109 @@ module Pixiv
         builder.field "client_id", CLIENT_ID
         builder.field "client_secret", CLIENT_SECRET
         builder.field "grant_type", "refresh_token"
-        builder.field "refresh_token", @refresh_token
+        builder.field "refresh_token", refresh_token
       end
       io.rewind
 
       res = HTTP::Client.post "https://oauth.secure.pixiv.net/auth/token", body: io, headers: headers
       if [200, 301, 302].includes? res.status_code
-        Log.debug { "Token refresh succesfull" }
+        Log.debug { "Token refresh successfull" }
       else
-        Log.error { "Failed to refresh access token!\n#{res.body}" }
+        Log.error { "Failed to refresh access token! Status: #{res.status} (#{res.status_code})\n#{res.body}" }
         raise "token refresh failed"
       end
 
-      info = RefreshInfo.from_json res.body
-      @access_token = info.access_token
-      @refresh_token = info.refresh_token
-      @expires_at = (Time.utc + Time::Span.new(seconds: info.expires_in))
-      info
-    end
-
-    # Get Illustration details
-    def illust_detail(illust_id : UInt64) : Illustration
-      res = @client.get "/v1/illust/detail?illust_id=#{illust_id}", headers: self.get_auth_header
-      unless res.success?
-        Log.error { "Status: #{res.status} (#{res.status_code})" }
-        Log.error { res.body }
-        raise "illust request failed"
-      end
-      IllustBox.from_json(res.body).illust
-    end
-
-    # Get User details
-    def user_detail(user_id : UInt64) : User # TODO: Make UserDetail model
-      res = @client.get "/v1/user/detail?user_id=#{user_id}", headers: self.get_auth_header
-      unless res.success?
-        Log.error { "Status: #{res.status} (#{res.status_code})" }
-        Log.error { res.body }
-        raise "user request failed"
-      end
-      UserBox.from_json(res.body).user
-    end
-
-    # Get User bookmarks
-    def user_bookmarks(user_id : UInt64, next_id : UInt64? = nil) : BookmarkPage
-      url = "/v1/user/bookmarks/illust?restrict=public&user_id=#{user_id}"
-      url += "&max_bookmark_id=#{next_id}" unless next_id.nil?
-      res = @client.get url, headers: self.get_auth_header
-      unless res.success?
-        Log.error { "Status: #{res.status} (#{res.status_code})" }
-        Log.error { res.body }
-        raise "user bookmark request failed"
-      end
-      BookmarkPage.from_json res.body
-    end
-
-    def illust_series(series_id : UInt64) : IllustrationSeries
-      res = @client.get "/v1/illust/series?illust_series_id=#{series_id}", headers: self.get_auth_header
-      unless res.success?
-        Log.error { "Status: #{res.status} (#{res.status_code})" }
-        Log.error { res.body }
-        raise "illust series request failed"
-      end
-      IllustrationSeries.from_json res.body
+      RefreshInfo.from_json res.body
     end
 
     # Search for users
-    def search_user(query : String, sort : Sort = Sort::None) : UserSearch
-      url = "/v1/search/user?word=#{URI.encode_path query}"
-      url += "&sort=#{URI.encode_path sort.to_s}" if sort != ""
-      res = @client.get url, headers: self.get_auth_header
-      unless res.success?
-        Log.error { "Status: #{res.status} (#{res.status_code})" }
-        Log.error { res.body }
-        raise "search request failed"
-      end
-      UserSearch.from_json res.body
+    def search_user(query : String, sort : Sort = Sort::None) : UserQuery
+      params = sort == Sort::None ? {} of String => String : {"sort" => sort.to_s}
+      res = self.get url, params, word: query
+      response_error res, "user search request failed" unless res.success?
+      UserQuery.from_json res.body
     end
 
-    private def get_auth_header
-      self.refresh if @expires_at <= Time.utc
+    private def get_auth_headers
       headers = DEFAULT_HEADERS.dup
       headers["Authorization"] = "Bearer #{@access_token}"
       headers
     end
-  end
 
-  private struct RefreshInfo
-    include JSON::Serializable
+    private def get(path : String, dyn_data = {} of String => String | UInt64, **data) : HTTP::Client::Response
+      self.refresh_token if @expires_at <= Time.utc
 
-    property access_token : String
-    property refresh_token : String
-    property expires_in : UInt32
-  end
+      data = data.to_h.merge dyn_data unless dyn_data.size == 0
 
-  private struct IllustBox
-    include JSON::Serializable
+      params = ""
+      unless data.size == 0
+        data.each do |key, value|
+          params += params.size == 0 ? "?" : "&"
+          value = URI.encode_path value.to_s unless value.is_a?(Number)
+          params += "#{URI.encode_path key.to_s}=#{value}"
+        end
+      end
 
-    property illust : Illustration
-  end
+      @client.get path+params, headers: self.get_auth_headers
+    end
 
-  private struct UserBox
-    include JSON::Serializable
+    private def post(path : String, dyn_data = {} of String => String | UInt64, **data) : HTTP::Client::Response
+      self.refresh_token if @expires_at <= Time.utc
 
-    property user : User
+      data = data.to_h.merge dyn_data unless dyn_data.size == 0
+
+      headers = self.get_auth_headers
+
+      io = IO::Memory.new
+      HTTP::FormData.build(io) do |builder|
+        headers["Content-Type"] = builder.content_type
+        data.each do |key, value|
+          builder.field key.to_s, value.to_s
+        end
+      end
+      io.rewind
+
+      @client.post path, body: io, headers: headers
+    end
+
+    private def response_error(response : HTTP::Client::Response, message : String)
+      Log.error { "Request failed! Status: #{response.status} (#{response.status_code})" }
+      body = response.body
+      begin
+        body = JSON.parse(body).to_pretty_json
+      rescue
+      end
+      Log.debug { "Error body:\n#{body}" }
+      raise message
+    end
+
+    private def refresh_token
+      info = Client.refresh @refresh_token
+      @access_token = info.access_token
+      @refresh_token = info.refresh_token
+      @expires_at = (Time.utc + Time::Span.new(seconds: info.expires_in))
+    end
+
+    private struct RefreshInfo
+      include JSON::Serializable
+
+      property access_token : String
+      property refresh_token : String
+      property expires_in : UInt32
+      property user : OAuthUser
+    end
+
+    struct OAuthUser
+      include JSON::Serializable
+
+      property id : String
+      property name : String
+      property account : String
+      property profile_image_urls : Hash(String, String)
+
+      def to_user : User
+        User.new self.id.to_u64, self.name, self.account, Avatar.new(self.profile_image_urls.last_value? || "")
+      end
+    end
   end
 end
