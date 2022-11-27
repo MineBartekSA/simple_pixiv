@@ -2,6 +2,7 @@ require "http"
 require "json"
 require "base64"
 require "openssl"
+require "compress/zip"
 
 require "./utils"
 require "./models"
