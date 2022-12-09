@@ -36,51 +36,65 @@ module Pixiv
     end
 
     def save_zip(filename : String = "")
-      filename = Path[self.zip_url.path].basename if filename == ""
+      filename = self.basename if filename == ""
       res = HTTP::Client.get(self.zip_url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"})
       raise "non-200 response (#{res.status_code})" unless res.success?
       File.write filename, res.body
     end
 
-    def video(ffmpeg_args : String = "-c:v libvpx-vp9 -crf 32 -pix_fmt yuv420p -f webm") : IO::Memory
+    def video(ffmpeg_args : String = "-c:v libvpx-vp9 -crf 32 -pix_fmt yuv420p -f webm") : DownloadData
       final = IO::Memory.new
 
-      res = HTTP::Client.get(self.zip_url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"})
-      raise "non-200 response (#{res.status_code})" unless res.success?
-      ugoira = res.body_io? || IO::Memory.new res.body
+      HTTP::Client.get(self.zip_url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"}) do |res|
+        raise "non-200 response (#{res.status_code})" unless res.success?
 
-      args = [
-        "-framerate", self.get_framerate.to_s, # TODO: Make frame delay adjust after transcoding
-        "-i", "-"
-      ]
-      args.concat ffmpeg_args.split(" ") if ffmpeg_args != ""
-      args << "-"
+        args = [
+          "-framerate", self.get_framerate.to_s, # TODO: Make frame delay adjust after transcoding
+          "-i", "-"
+        ]
+        args.concat ffmpeg_args.split(" ") if ffmpeg_args != ""
+        args << "-"
 
-      ffmpeg = Process.new("ffmpeg", args, input: :pipe, output: :pipe)
+        ffmpeg = Process.new("ffmpeg", args, input: :pipe, output: :pipe)
 
-      spawn IO.copy ffmpeg.output, final
+        spawn IO.copy ffmpeg.output, final
 
-      Compress::Zip::Reader.open(ugoira, true) do |zip|
-        zip.each_entry do |entry|
-          IO.copy entry.io, ffmpeg.input
+        Compress::Zip::Reader.open(res.body_io, true) do |zip|
+          zip.each_entry do |entry|
+            IO.copy entry.io, ffmpeg.input
+          end
         end
-      end
 
-      status = ffmpeg.wait
-      raise "ffmpeg failed" unless status.success?
+        status = ffmpeg.wait
+        raise "ffmpeg failed" unless status.success?
+      end
       final.rewind
 
-      final
+      name = self.basename[..-5]
+      proc = Process.new "file", ["--mime-type", "-"], input: :pipe, output: :pipe
+
+      IO.copy final, proc.input, 512
+      mime_io = IO::Memory.new
+      spawn IO.copy proc.output, mime_io
+
+      status = proc.wait
+      raise "file failed to read mime-type" unless status.success?
+      final.rewind
+      mime = mime_io.to_s[12..-2]
+
+      MIME.extensions(mime).first?.try { |ext| name += ext }
+
+      DownloadData.new final, name, mime
     end
 
     def save_video(filename : String = "", ffmpeg_args : String = "")
-      filename = Path[self.zip_url.path].basename[..-5] + ".webm" if filename == ""
       video = if ffmpeg_args == ""
         self.video
       else
         self.video ffmpeg_args
       end
-      File.write filename, video
+      filename = video.filename if filename == ""
+      File.write filename, video.data
     end
 
     private def get_framerate
@@ -88,6 +102,10 @@ module Pixiv
       delays.uniq!
       return 1000/delays[0] if delays.size == 1
       1000/delays.map_with_index(offset = 1) { |delay, i| delays[i - 1].gcd delay }[-1]
+    end
+
+    private def basename
+      Path[self.zip_url.path].basename
     end
   end
 

@@ -137,11 +137,36 @@ module Pixiv
       url = URI.parse self.get page, quality
       res = HTTP::Client.get url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"}
       unless res.success?
-        Log.error { "Download Status: #{res.status} (#{res.status_code})" }
+        Log.error { "Download failed: #{res.status} (#{res.status_code})" }
         raise "download failed"
       end
       io = res.body_io? || IO::Memory.new res.body
       DownloadData.new io, Path[url.path].basename, res.headers["Content-Type"]
+    end
+
+    # Download the highest quality limited to filesize (default 8 MB)
+    def download_limitted(page : UInt8 = 1, limit : UInt64 = 8_u64*1000*1000) : DownloadData
+      ImageDetail.each do |detail, _|
+        raw = self.get page, detail
+        next if raw == ""
+        url = URI.parse raw
+        HTTP::Client.get url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"} do |res|
+          unless res.success?
+            Log.error { "Download failed: #{res.status} (#{res.status_code})" }
+            raise "download failed"
+          end
+          length = res.headers["Content-Length"].to_u64
+          if length > limit
+            res.body_io.close
+            next
+          end
+          io = IO::Memory.new
+          IO.copy res.body_io, io, length
+          io.rewind
+          return DownloadData.new io, Path[url.path].basename, res.headers["Content-Type"]
+        end
+      end
+      raise "failed to download ilustration within limit"
     end
   end
 

@@ -1,5 +1,6 @@
 require "http"
 require "json"
+require "mime"
 require "base64"
 require "openssl"
 require "compress/zip"
