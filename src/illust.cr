@@ -239,20 +239,6 @@ module Pixiv
     end
   end
 
-  struct DownloadData
-    property filename : String
-    property type : String
-    property data : IO
-
-    def initialize(@data, @filename, @type)
-    end
-
-    def save(filename : String = "")
-      filename = self.filename if filename == ""
-      File.write filename, self.data
-    end
-  end
-
   struct RelatedIllustrations
     include JSON::Serializable
 

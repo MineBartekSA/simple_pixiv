@@ -36,7 +36,7 @@ module Pixiv
     end
 
     def save_zip(filename : String = "")
-      filename = self.basename if filename == ""
+      filename = self.zip_basename if filename == ""
       res = HTTP::Client.get(self.zip_url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"})
       raise "non-200 response (#{res.status_code})" unless res.success?
       File.write filename, res.body
@@ -70,7 +70,7 @@ module Pixiv
       end
       final.rewind
 
-      name = self.basename[..-5]
+      name = self.basename
       proc = Process.new "file", ["--mime-type", "-"], input: :pipe, output: :pipe
 
       IO.copy final, proc.input, 512
@@ -104,8 +104,12 @@ module Pixiv
       1000/delays.map_with_index(offset = 1) { |delay, i| delays[i - 1].gcd delay }[-1]
     end
 
-    private def basename
+    def zip_basename
       Path[self.zip_url.path].basename
+    end
+
+    def basename
+      self.zip_basename[..-5]
     end
   end
 
