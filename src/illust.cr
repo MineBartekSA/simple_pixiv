@@ -155,7 +155,9 @@ module Pixiv
             Log.error { "Download failed: #{res.status} (#{res.status_code})" }
             raise "download failed"
           end
-          length = res.headers["Content-Length"].to_u64
+          content_length = res.headers["Content-Length"]?
+          raise "request failed" if content_length.nil?
+          length = content_length.not_nil!.to_u64
           if length > limit
             res.body_io.close
             next
