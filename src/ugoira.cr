@@ -124,11 +124,22 @@ module Pixiv
       File.write filename, video.data
     end
 
-    private def get_framerate
-      delays = self.frames.map &.delay
-      delays.uniq!
-      return 1000/delays[0] if delays.size == 1
-      1000/delays.map_with_index(offset = 1) { |delay, i| delays[i - 1].gcd delay }[-1]
+    def save_video_with_metadata(filename : String = "", ffmpeg_args : String = "")
+      video = if ffmpeg_args == ""
+        self.video
+      else
+        self.video ffmpeg_args
+      end
+
+      filename = video.filename if filename == ""
+
+      # Pass the video through ffmpeg again to fix metadata
+      metadata = Process.new("ffmpeg", ["-y", "-i", "-", "-c:v", "copy", "-c:a", "copy", "-f", "webm", filename], input: :pipe, output: :pipe)
+
+      IO.copy video.data, metadata.input
+
+      status = metadata.wait
+      raise "ffmpeg matadata fix failed" unless status.success?
     end
 
     def zip_basename
