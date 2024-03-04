@@ -42,32 +42,60 @@ module Pixiv
       File.write filename, res.body
     end
 
-    def video(ffmpeg_args : String = "-c:v libvpx-vp9 -crf 32 -pix_fmt yuv420p -f webm") : DownloadData
+    def video(ffmpeg_args : String = "-c:v libvpx-vp9 -crf 31 -pix_fmt yuv420p -f webm") : DownloadData
       final = IO::Memory.new
+
+      temp_dir = "#{Dir.tempdir}/#{Random::Secure.hex}"
 
       HTTP::Client.get(self.zip_url, headers: HTTP::Headers{"Referer" => "https://app-api.pixiv.net/"}) do |res|
         raise "non-200 response (#{res.status_code})" unless res.success?
 
-        args = [
-          "-framerate", self.get_framerate.to_s, # TODO: Make frame delay adjust after transcoding
-          "-i", "-"
-        ]
-        args.concat ffmpeg_args.split(" ") if ffmpeg_args != ""
-        args << "-"
-
-        ffmpeg = Process.new("ffmpeg", args, input: :pipe, output: :pipe)
-
-        spawn IO.copy ffmpeg.output, final
+        Dir.mkdir_p temp_dir
+        Log.debug { "Downloading ugiora to: #{temp_dir}" }
 
         Compress::Zip::Reader.open(res.body_io, true) do |zip|
           zip.each_entry do |entry|
-            IO.copy entry.io, ffmpeg.input
+            filepath = "#{temp_dir}/#{entry.filename}"
+            File.write filepath, entry.io
           end
         end
-
-        status = ffmpeg.wait
-        raise "ffmpeg failed" unless status.success?
       end
+
+      concat = File.open "#{temp_dir}/concat.txt", "w"
+      concat.puts "ffconcat version 1.0"
+      self.frames.each do |frame|
+        concat.puts "file #{frame.file}"
+        concat.puts "duration #{frame.delay}ms"
+      end
+      concat.close
+
+      Log.debug { "Finished writing ugiora and concat file" }
+
+      args = [
+        "-f", "concat",
+        "-safe", "0",
+        "-i", "#{temp_dir}/concat.txt",
+        "-enc_time_base", "1/1000",
+        "-vsync", "vfr" # TODO: update to fps_mode at some point
+      ]
+      args.concat ffmpeg_args.split(" ") if ffmpeg_args != ""
+      args << "-"
+
+      ffmpeg = Process.new("ffmpeg", args, input: :pipe, output: :pipe)
+
+      spawn IO.copy ffmpeg.output, final
+
+      # Wait for ffmpeg to finish
+      status = ffmpeg.wait
+
+      # Clean up
+      Dir.new(temp_dir).each_child do |c|
+        File.delete "#{temp_dir}/#{c}"
+      end
+      Dir.delete temp_dir
+
+      # Check if ffmpeg succeded
+      raise "ffmpeg failed" unless status.success?
       final.rewind
 
       name = self.basename
