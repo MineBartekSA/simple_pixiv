@@ -75,8 +75,7 @@ module Pixiv
         "-f", "concat",
         "-safe", "0",
         "-i", "#{temp_dir}/concat.txt",
-        "-enc_time_base", "1/1000",
-        "-vsync", "vfr" # TODO: update to fps_mode at some point
+        "-enc_time_base", "1/1000"
       ]
       args.concat ffmpeg_args.split(" ") if ffmpeg_args != ""
       args << "-"
